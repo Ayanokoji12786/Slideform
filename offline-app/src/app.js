@@ -105,10 +105,12 @@ function downloadBuffer(buffer, name) {
 async function readPptx(file) {
   const zip = await JSZip.loadAsync(file);
   const paths = Object.keys(zip.files).filter((path) => /^ppt\/slides\/slide\d+\.xml$/.test(path)).sort((a, b) => slideNumber(a) - slideNumber(b));
+  const presentationFile = zip.file("ppt/presentation.xml");
+  if (!presentationFile) throw new Error("This file is not a valid PowerPoint presentation.");
   const parser = new DOMParser();
-  const presentation = parser.parseFromString(await zip.file("ppt/presentation.xml").async("text"), "application/xml");
+  const presentation = parser.parseFromString(await presentationFile.async("text"), "application/xml");
   const slideSize = presentationNodes(presentation, "sldSz")[0];
-  const size = { width: Number(slideSize?.getAttribute("cx") || 12192000), height: Number(slideSize?.getAttribute("cy") || 6858000) };
+  const size = { width: Number(slideSize?.getAttribute("cx")) || 12192000, height: Number(slideSize?.getAttribute("cy")) || 6858000 };
   const slides = [];
   for (const path of paths) {
     const xml = parser.parseFromString(await zip.file(path).async("text"), "application/xml");
