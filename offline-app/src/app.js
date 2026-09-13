@@ -5,6 +5,7 @@ if ("serviceWorker" in navigator) navigator.serviceWorker.register("./service-wo
 const ns = "http://schemas.openxmlformats.org/drawingml/2006/main";
 const presentationNs = "http://schemas.openxmlformats.org/presentationml/2006/main";
 const chartNs = "http://schemas.openxmlformats.org/drawingml/2006/chart";
+const diagramNs = "http://schemas.openxmlformats.org/drawingml/2006/diagram";
 const state = { file: null, kind: null, slides: [], tableMode: "all", pdf: null };
 const $ = (selector) => document.querySelector(selector);
 const fileInput = $("#pptx-file");
@@ -14,6 +15,7 @@ const slideNumbers = $("#slide-numbers");
 const convertButton = $("#convert-button");
 const status = $("#status");
 const selectionHelp = $("#selection-help");
+const visualNote = $("#visual-copy-note");
 const choices = $(".choice-row");
 
 const normalise = (value) => value.replace(/\s+/g, " ").trim().toLocaleLowerCase();
@@ -82,6 +84,16 @@ async function readSlideCharts(zip, number, xml, parser) {
   return charts;
 }
 
+function visualOnlyReasons(xml, chartsFound) {
+  const reasons = new Set();
+  if (xml.getElementsByTagNameNS(diagramNs, "relIds").length) reasons.add("a SmartArt diagram");
+  if (presentationNodes(xml, "cxnSp").length) reasons.add("connected shapes");
+  if (nodes(xml, "graphicData").some((data) => (data.getAttribute("uri") || "").toLowerCase().includes("ole"))) reasons.add("an embedded object");
+  const chartFrames = presentationNodes(xml, "graphicFrame").filter((frame) => frame.getElementsByTagNameNS(chartNs, "chart").length).length;
+  if (chartFrames > chartsFound) reasons.add("a chart without readable cached data");
+  return Array.from(reasons);
+}
+
 function downloadBuffer(buffer, name) {
   const link = document.createElement("a");
   link.href = URL.createObjectURL(new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
@@ -115,7 +127,8 @@ async function readPptx(file) {
       ...textBoxes.map((shape) => shape.text),
       ...tables.flatMap((table) => table.rows.map((row) => row.join(" "))),
     ];
-    slides.push({ number, size, tables, textBoxes, charts, hasDemandPriority: content.some((value) => normalise(value).includes("demand priority")) });
+    const visualOnly = visualOnlyReasons(xml, charts.length);
+    slides.push({ number, size, tables, textBoxes, charts, visualOnly, hasDemandPriority: content.some((value) => normalise(value).includes("demand priority")) });
   }
   return slides;
 }
@@ -131,6 +144,17 @@ function selectedNumbers() {
   return [...new Set(values.map(Number))];
 }
 
+function updateVisualCopyNote() {
+  if (state.kind !== "pptx" || !state.slides.length) { visualNote.hidden = true; return; }
+  const numbers = slideNumbers.value.split(",").map((item) => item.trim()).filter((item) => /^\d+$/.test(item)).map(Number);
+  const flagged = numbers.map((number) => state.slides.find((slide) => slide.number === number)).filter((slide) => slide?.visualOnly.length);
+  if (!flagged.length) { visualNote.hidden = true; return; }
+  const list = flagged.map((slide) => slide.number).join(", ");
+  const pronoun = flagged.length === 1 ? "it" : "them";
+  visualNote.textContent = `Slide${flagged.length === 1 ? "" : "s"} ${list} also ${flagged.length === 1 ? "has" : "have"} content native extraction can't fully capture. Export ${pronoun} to PDF separately for a faithful copy.`;
+  visualNote.hidden = false;
+}
+
 async function setFile(file) {
   const pptx = file?.name.toLowerCase().endsWith(".pptx");
   const pdf = file?.name.toLowerCase().endsWith(".pdf");
@@ -144,12 +168,14 @@ async function setFile(file) {
       state.pdf = result.pdf; slideNumbers.value = result.pages.join(", "); choices.hidden = true;
       selectionHelp.textContent = "This PDF was rendered by a presentation app. Select the pages to place in Excel as slide images.";
       setStatus(`Selected all ${result.pages.length} PDF pages for image export.`);
+      visualNote.hidden = true;
     } else {
       state.slides = await readPptx(file);
       const matches = state.slides.filter((slide) => slide.hasDemandPriority).map((slide) => slide.number);
       slideNumbers.value = matches.join(", "); choices.hidden = false;
       selectionHelp.innerHTML = 'Slides containing <strong>Demand Priority</strong> are selected automatically. Edit the list if needed.';
       setStatus(matches.length ? `Selected slides ${matches.join(", ")} because they contain Demand Priority.` : "No Demand Priority slides found. Enter slide numbers manually.");
+      updateVisualCopyNote();
     }
     convertButton.disabled = false;
   } catch (error) {
@@ -258,6 +284,7 @@ async function convert() {
 }
 
 fileInput.addEventListener("change", () => setFile(fileInput.files[0]));
+slideNumbers.addEventListener("input", updateVisualCopyNote);
 ["dragenter", "dragover"].forEach((event) => dropzone.addEventListener(event, (e) => { e.preventDefault(); dropzone.classList.add("dragging"); }));
 ["dragleave", "drop"].forEach((event) => dropzone.addEventListener(event, (e) => { e.preventDefault(); dropzone.classList.remove("dragging"); }));
 dropzone.addEventListener("drop", (event) => setFile(event.dataTransfer.files[0]));
