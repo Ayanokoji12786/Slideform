@@ -1,4 +1,4 @@
-const cacheName = "slideform-v5";
+const cacheName = "slideform-v6";
 const assets = [
   "./", "./index.html", "./styles.css", "./app.js", "./demo.js", "./manifest.webmanifest",
   "./vendor/jszip.min.js", "./vendor/exceljs.min.js",
