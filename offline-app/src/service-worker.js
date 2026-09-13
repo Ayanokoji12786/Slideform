@@ -1,8 +1,9 @@
-const cacheName = "slideform-v2";
+const cacheName = "slideform-v3";
 const assets = [
   "./", "./index.html", "./styles.css", "./app.js", "./demo.js", "./manifest.webmanifest",
   "./vendor/jszip.min.js", "./vendor/xlsx.full.min.js", "./vendor/exceljs.min.js",
-  "./vendor/pdf.min.mjs", "./vendor/pdf.worker.min.mjs"
+  "./vendor/pdf.min.mjs", "./vendor/pdf.worker.min.mjs",
+  "./assets/guide-character.png", "./assets/guide-reviewing.png", "./assets/guide-complete.png"
 ];
 
 self.addEventListener("install", (event) => event.waitUntil(caches.open(cacheName).then((cache) => cache.addAll(assets))));

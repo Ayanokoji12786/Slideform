@@ -3,7 +3,9 @@ import * as pdfjsLib from "./vendor/pdf.min.mjs";
 pdfjsLib.GlobalWorkerOptions.workerSrc = "./vendor/pdf.worker.min.mjs";
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("./service-worker.js");
 const ns = "http://schemas.openxmlformats.org/drawingml/2006/main";
-const state = { file: null, kind: null, slides: [], tableMode: "first", pdf: null };
+const presentationNs = "http://schemas.openxmlformats.org/presentationml/2006/main";
+const chartNs = "http://schemas.openxmlformats.org/drawingml/2006/chart";
+const state = { file: null, kind: null, slides: [], tableMode: "all", pdf: null };
 const $ = (selector) => document.querySelector(selector);
 const fileInput = $("#pptx-file");
 const dropzone = $("#dropzone");
@@ -16,6 +18,7 @@ const choices = $(".choice-row");
 
 const normalise = (value) => value.replace(/\s+/g, " ").trim().toLocaleLowerCase();
 const nodes = (node, name) => Array.from(node.getElementsByTagNameNS(ns, name));
+const presentationNodes = (node, name) => Array.from(node.getElementsByTagNameNS(presentationNs, name));
 const slideNumber = (path) => Number(path.match(/slide(\d+)\.xml$/)[1]);
 const outputName = () => state.file.name.replace(/\.(pptx|pdf)$/i, ".xlsx");
 
@@ -26,6 +29,56 @@ function setStatus(message, error = false) {
 
 function textBodyText(body) {
   return nodes(body, "p").map((paragraph) => nodes(paragraph, "t").map((run) => run.textContent).join("")).join("\n");
+}
+
+function geometry(node) {
+  const transform = presentationNodes(node, "xfrm")[0] || nodes(node, "xfrm")[0];
+  const offset = transform && nodes(transform, "off")[0];
+  const extent = transform && nodes(transform, "ext")[0];
+  return {
+    x: Number(offset?.getAttribute("x") || 0),
+    y: Number(offset?.getAttribute("y") || 0),
+    width: Number(extent?.getAttribute("cx") || 0),
+    height: Number(extent?.getAttribute("cy") || 0),
+  };
+}
+
+function resolvePptPath(base, target) {
+  return new URL(target, `https://slideform.local/${base}`).pathname.slice(1);
+}
+
+function cachedPoints(container) {
+  if (!container) return [];
+  const cache = nodes(container, "strCache")[0] || nodes(container, "numCache")[0];
+  if (!cache) return [];
+  return nodes(cache, "pt").sort((a, b) => Number(a.getAttribute("idx")) - Number(b.getAttribute("idx"))).map((point) => nodes(point, "v")[0]?.textContent || "");
+}
+
+async function readSlideCharts(zip, number, xml, parser) {
+  const relPath = `ppt/slides/_rels/slide${number}.xml.rels`;
+  if (!zip.file(relPath)) return [];
+  const rels = parser.parseFromString(await zip.file(relPath).async("text"), "application/xml");
+  const targets = new Map(Array.from(rels.getElementsByTagName("Relationship")).map((relationship) => [relationship.getAttribute("Id"), relationship.getAttribute("Target")]));
+  const charts = [];
+  for (const frame of presentationNodes(xml, "graphicFrame")) {
+    const chartRef = Array.from(frame.getElementsByTagNameNS(chartNs, "chart"))[0];
+    const relationId = chartRef?.getAttributeNS("http://schemas.openxmlformats.org/officeDocument/2006/relationships", "id");
+    const target = relationId && targets.get(relationId);
+    if (!target) continue;
+    const chartFile = zip.file(resolvePptPath("ppt/slides/", target));
+    if (!chartFile) continue;
+    const chartXml = parser.parseFromString(await chartFile.async("text"), "application/xml");
+    const rows = [];
+    for (const series of Array.from(chartXml.getElementsByTagNameNS(chartNs, "ser"))) {
+      const name = Array.from(series.getElementsByTagNameNS(chartNs, "v"))[0]?.textContent || "";
+      const categories = cachedPoints(Array.from(series.getElementsByTagNameNS(chartNs, "cat"))[0]);
+      const values = cachedPoints(Array.from(series.getElementsByTagNameNS(chartNs, "val"))[0]);
+      const length = Math.max(categories.length, values.length, 1);
+      for (let index = 0; index < length; index += 1) rows.push([name, categories[index] || "", values[index] || ""]);
+    }
+    if (rows.length) charts.push({ geometry: geometry(frame), rows });
+  }
+  return charts;
 }
 
 function downloadBuffer(buffer, name) {
@@ -40,16 +93,28 @@ async function readPptx(file) {
   const zip = await JSZip.loadAsync(file);
   const paths = Object.keys(zip.files).filter((path) => /^ppt\/slides\/slide\d+\.xml$/.test(path)).sort((a, b) => slideNumber(a) - slideNumber(b));
   const parser = new DOMParser();
+  const presentation = parser.parseFromString(await zip.file("ppt/presentation.xml").async("text"), "application/xml");
+  const slideSize = presentationNodes(presentation, "sldSz")[0];
+  const size = { width: Number(slideSize?.getAttribute("cx") || 12192000), height: Number(slideSize?.getAttribute("cy") || 6858000) };
   const slides = [];
   for (const path of paths) {
     const xml = parser.parseFromString(await zip.file(path).async("text"), "application/xml");
     if (xml.querySelector("parsererror")) throw new Error("One slide could not be read.");
-    const tables = nodes(xml, "tbl").map((table) => nodes(table, "tr").map((row) => nodes(row, "tc").map(textBodyText)));
+    const number = slideNumber(path);
+    const tables = presentationNodes(xml, "graphicFrame").map((frame) => {
+      const table = nodes(frame, "tbl")[0];
+      return table && { geometry: geometry(frame), rows: nodes(table, "tr").map((row) => nodes(row, "tc").map(textBodyText)) };
+    }).filter(Boolean);
+    const textBoxes = presentationNodes(xml, "sp").map((shape) => {
+      const text = nodes(shape, "txBody")[0];
+      return text && { geometry: geometry(shape), text: textBodyText(text) };
+    }).filter((shape) => shape && shape.text);
+    const charts = await readSlideCharts(zip, number, xml, parser);
     const content = [
-      ...nodes(xml, "txBody").map(textBodyText),
-      ...tables.flatMap((table) => table.map((row) => row.join(" "))),
+      ...textBoxes.map((shape) => shape.text),
+      ...tables.flatMap((table) => table.rows.map((row) => row.join(" "))),
     ];
-    slides.push({ number: slideNumber(path), tables, hasDemandPriority: content.some((value) => normalise(value).includes("demand priority")) });
+    slides.push({ number, size, tables, textBoxes, charts, hasDemandPriority: content.some((value) => normalise(value).includes("demand priority")) });
   }
   return slides;
 }
@@ -92,20 +157,70 @@ async function setFile(file) {
   }
 }
 
-function convertTables(selected) {
+function slidePosition(value, total, available) {
+  return Math.max(1, Math.min(available, Math.floor((value / total) * available) + 1));
+}
+
+function reserveArea(occupied, row, column, rowSpan, columnSpan) {
+  let targetRow = row;
+  const free = () => {
+    for (let r = targetRow; r < targetRow + rowSpan; r += 1) for (let c = column; c < column + columnSpan; c += 1) if (occupied.has(`${r}:${c}`)) return false;
+    return true;
+  };
+  while (!free()) targetRow += 1;
+  for (let r = targetRow; r < targetRow + rowSpan; r += 1) for (let c = column; c < column + columnSpan; c += 1) occupied.add(`${r}:${c}`);
+  return targetRow;
+}
+
+function applyBorder(cell) {
+  cell.border = { top: { style: "thin", color: { argb: "FFBFC3C9" } }, left: { style: "thin", color: { argb: "FFBFC3C9" } }, bottom: { style: "thin", color: { argb: "FFBFC3C9" } }, right: { style: "thin", color: { argb: "FFBFC3C9" } } };
+  cell.alignment = { vertical: "top", wrapText: true };
+}
+
+async function convertPptxContent(selected) {
   const slides = selected.map((number) => state.slides.find((slide) => slide.number === number));
   if (slides.some((slide) => !slide)) throw new Error("One or more selected slide numbers do not exist in this presentation.");
-  const workbook = XLSX.utils.book_new(); let count = 0;
+  const workbook = new ExcelJS.Workbook(); let count = 0;
   slides.forEach((slide) => {
-    const tables = state.tableMode === "all" ? slide.tables : slide.tables.slice(0, 1);
-    if (!tables.length) throw new Error(`Slide ${slide.number} does not contain a native PowerPoint table.`);
-    tables.forEach((rows, index) => {
-      XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(rows), `Slide ${slide.number} Table ${index + 1}`);
-      count += 1;
+    const sheet = workbook.addWorksheet(`Slide ${slide.number}`, { views: [{ showGridLines: false }] });
+    const columns = 18; const rows = 36; const occupied = new Set();
+    for (let column = 1; column <= columns; column += 1) sheet.getColumn(column).width = 12;
+    for (let row = 1; row <= rows; row += 1) sheet.getRow(row).height = 19;
+
+    slide.textBoxes.forEach((shape) => {
+      const column = slidePosition(shape.geometry.x, slide.size.width, columns);
+      const row = slidePosition(shape.geometry.y, slide.size.height, rows);
+      const columnSpan = Math.max(1, Math.ceil((shape.geometry.width / slide.size.width) * columns));
+      const rowSpan = Math.max(1, Math.ceil((shape.geometry.height / slide.size.height) * rows));
+      const targetRow = reserveArea(occupied, row, column, rowSpan, Math.min(columnSpan, columns - column + 1));
+      const cell = sheet.getCell(targetRow, column);
+      cell.value = shape.text;
+      cell.alignment = { vertical: "top", wrapText: true };
     });
+
+    const tables = state.tableMode === "all" ? slide.tables : slide.tables.slice(0, 1);
+    tables.forEach((table) => {
+      const column = slidePosition(table.geometry.x, slide.size.width, columns);
+      const row = slidePosition(table.geometry.y, slide.size.height, rows);
+      const columnSpan = Math.max(1, Math.ceil((table.geometry.width / slide.size.width) * columns));
+      const tableColumns = Math.max(...table.rows.map((items) => items.length), 1);
+      const targetRow = reserveArea(occupied, row, column, Math.max(table.rows.length, 1), Math.min(Math.max(columnSpan, tableColumns), columns - column + 1));
+      table.rows.forEach((items, rowIndex) => items.forEach((value, columnIndex) => {
+        const cell = sheet.getCell(targetRow + rowIndex, column + columnIndex);
+        cell.value = value;
+        applyBorder(cell);
+      }));
+    });
+    slide.charts.forEach((chart) => {
+      const column = slidePosition(chart.geometry.x, slide.size.width, columns);
+      const row = slidePosition(chart.geometry.y, slide.size.height, rows);
+      const targetRow = reserveArea(occupied, row, column, chart.rows.length + 1, 3);
+      ["Series", "Category", "Value"].forEach((value, index) => { const cell = sheet.getCell(targetRow, column + index); cell.value = value; applyBorder(cell); });
+      chart.rows.forEach((items, rowIndex) => items.forEach((value, columnIndex) => { const cell = sheet.getCell(targetRow + rowIndex + 1, column + columnIndex); cell.value = value; applyBorder(cell); }));
+    });
+    count += 1;
   });
-  XLSX.writeFile(workbook, outputName(), { compression: true });
-  return `${count} native table${count === 1 ? "" : "s"}`;
+  return workbook.xlsx.writeBuffer().then((buffer) => { downloadBuffer(buffer, outputName()); return `${count} slide worksheet${count === 1 ? "" : "s"}`; });
 }
 
 async function convertPdfPages(selected) {
@@ -132,7 +247,7 @@ async function convert() {
   try {
     const selected = selectedNumbers();
     convertButton.disabled = true; setStatus(`Creating ${outputName()}…`);
-    const result = state.kind === "pdf" ? await convertPdfPages(selected) : convertTables(selected);
+    const result = state.kind === "pdf" ? await convertPdfPages(selected) : await convertPptxContent(selected);
     setStatus(`Downloaded ${outputName()} with ${result}.`);
   } catch (error) {
     setStatus(error.message || "The workbook could not be created.", true);

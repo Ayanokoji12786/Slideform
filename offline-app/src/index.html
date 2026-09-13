@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="#111420" />
-    <meta name="description" content="Extract native PowerPoint tables to Excel entirely on your device." />
+    <meta name="description" content="Convert native PowerPoint content to Excel entirely on your device." />
     <link rel="manifest" href="manifest.webmanifest" />
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%23f2c94c'/%3E%3Cpath d='M17 16h30v21H17z' fill='%23111420'/%3E%3Cpath d='M22 42h20v7H22z' fill='%23111420'/%3E%3C/svg%3E" />
     <link rel="stylesheet" href="styles.css" />
@@ -23,7 +23,7 @@
       </nav>
 
       <section class="hero" id="top">
-        <p class="eyebrow">PowerPoint tables to Excel</p>
+        <p class="eyebrow">PowerPoint content to Excel</p>
         <h1>Keep the data.<br /><em>Leave the guessing out.</em></h1>
         <p class="intro">A secure offline workspace for converting PowerPoint content into Excel.</p>
         <div class="hero-orb orb-one" aria-hidden="true"></div>
@@ -58,8 +58,8 @@
               <input id="slide-numbers" inputmode="numeric" placeholder="e.g. 6, 11, 15" autocomplete="off" />
             </div>
             <div class="choice-row" role="group" aria-label="Tables to export">
-              <button class="choice active" type="button" data-table-mode="first" aria-pressed="true">First table per slide</button>
-              <button class="choice" type="button" data-table-mode="all" aria-pressed="false">All native tables</button>
+              <button class="choice active" type="button" data-table-mode="all" aria-pressed="true">All native tables</button>
+              <button class="choice" type="button" data-table-mode="first" aria-pressed="false">First table only</button>
             </div>
           </div>
         </div>
@@ -69,7 +69,7 @@
           <div class="step-content">
             <p class="label">Export</p>
             <h2>Create the workbook</h2>
-            <p class="field-help">Native table cells copy exactly. Empty cells stay empty.</p>
+            <p class="field-help">Text, tables, and available chart data are copied. Empty table cells stay empty.</p>
             <button class="convert-button" id="convert-button" type="button" disabled>
               <span>Convert to Excel</span><b>↗</b>
             </button>
@@ -79,7 +79,7 @@
       </section>
 
       <section class="assurance" aria-label="Privacy and processing details">
-        <div><span>Native extraction</span><p>Reads PowerPoint table cells directly, with no generated values.</p></div>
+        <div><span>Native extraction</span><p>Reads slide text, tables, and available chart data directly, with no generated values.</p></div>
         <div><span>Private processing</span><p>Files stay in your browser and download directly to your device.</p></div>
         <div><span>Cross-device</span><p>Use a current browser on desktop, tablet, or mobile.</p></div>
       </section>
