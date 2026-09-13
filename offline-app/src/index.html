@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#111420" />
+    <meta name="description" content="Extract native PowerPoint tables to Excel entirely on your device." />
+    <link rel="manifest" href="manifest.webmanifest" />
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%23f2c94c'/%3E%3Cpath d='M17 16h30v21H17z' fill='%23111420'/%3E%3Cpath d='M22 42h20v7H22z' fill='%23111420'/%3E%3C/svg%3E" />
+    <link rel="stylesheet" href="styles.css" />
+    <title>Slideform</title>
+  </head>
+  <body>
+    <main class="shell">
+      <nav class="topbar" aria-label="Primary">
+        <a class="brand" href="#top" aria-label="Slideform home">
+          <span class="brand-mark">S</span><span>slideform</span>
+        </a>
+        <div class="top-actions">
+          <button class="demo-trigger" id="demo-trigger" type="button"><span>●</span> Guided demo</button>
+          <span class="privacy-note"><i></i> Offline by design</span>
+        </div>
+      </nav>
+
+      <section class="hero" id="top">
+        <p class="eyebrow">PowerPoint tables to Excel</p>
+        <h1>Keep the data.<br /><em>Leave the guessing out.</em></h1>
+        <p class="intro">A secure offline workspace for converting PowerPoint content into Excel.</p>
+        <div class="hero-orb orb-one" aria-hidden="true"></div>
+        <div class="hero-orb orb-two" aria-hidden="true"></div>
+      </section>
+
+      <section class="workspace" aria-label="PowerPoint conversion workspace">
+        <div class="step step-file">
+          <div class="step-index">01</div>
+          <div class="step-content">
+            <p class="label">Presentation</p>
+            <h2>Choose a source file</h2>
+            <label class="dropzone" id="dropzone" for="pptx-file">
+              <input id="pptx-file" type="file" accept=".pptx,.pdf,application/vnd.openxmlformats-officedocument.presentationml.presentation,application/pdf" />
+              <span class="drop-icon">+</span>
+              <span><strong>Drop a .pptx or rendered PDF here</strong><small>or browse from this device</small></span>
+              <span class="file-name" id="file-name">No file selected</span>
+            </label>
+          </div>
+        </div>
+
+        <div class="step step-options">
+          <div class="step-index">02</div>
+          <div class="step-content">
+            <p class="label">Selection</p>
+            <h2>Review the slides</h2>
+            <p class="field-help" id="selection-help">Slides containing <strong>Demand Priority</strong> are selected automatically. Edit the list if needed.</p>
+            <div class="field-row">
+              <label for="slide-numbers">Slide numbers</label>
+              <input id="slide-numbers" inputmode="numeric" placeholder="e.g. 6, 11, 15" autocomplete="off" />
+            </div>
+            <div class="choice-row" role="group" aria-label="Tables to export">
+              <button class="choice active" type="button" data-table-mode="first" aria-pressed="true">First table per slide</button>
+              <button class="choice" type="button" data-table-mode="all" aria-pressed="false">All native tables</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="step step-export">
+          <div class="step-index">03</div>
+          <div class="step-content">
+            <p class="label">Export</p>
+            <h2>Create the workbook</h2>
+            <p class="field-help">Native table cells copy exactly. Empty cells stay empty.</p>
+            <button class="convert-button" id="convert-button" type="button" disabled>
+              <span>Convert to Excel</span><b>↗</b>
+            </button>
+            <p class="status" id="status" role="status">Choose a presentation to begin.</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="assurance" aria-label="Privacy and processing details">
+        <div><span>Native extraction</span><p>Reads PowerPoint table cells directly, with no generated values.</p></div>
+        <div><span>Private processing</span><p>Files stay in your browser and download directly to your device.</p></div>
+        <div><span>Cross-device</span><p>Use a current browser on desktop, tablet, or mobile.</p></div>
+      </section>
+    </main>
+    <aside class="demo-panel" id="demo-panel" aria-hidden="true" aria-label="Guided conversion demo">
+      <div class="demo-card">
+        <button class="demo-close" id="demo-close" type="button" aria-label="Close guided demo">×</button>
+        <div class="guide-stage">
+          <span class="guide-glow" aria-hidden="true"></span>
+          <img id="guide-character" src="assets/guide-character.png" alt="Slideform guide" />
+          <span class="expression" id="expression">Ready</span>
+        </div>
+        <div class="demo-copy">
+          <p class="label">Guided demo</p>
+          <h2 id="demo-title">Ready when you are</h2>
+          <p id="demo-message">Choose a PowerPoint file to begin your conversion.</p>
+          <div class="demo-steps" role="tablist" aria-label="Conversion steps">
+            <button type="button" class="demo-step active" data-step="0" role="tab" aria-selected="true">1 <span>Choose file</span></button>
+            <button type="button" class="demo-step" data-step="1" role="tab" aria-selected="false">2 <span>Review slides</span></button>
+            <button type="button" class="demo-step" data-step="2" role="tab" aria-selected="false">3 <span>Download Excel</span></button>
+          </div>
+          <div class="demo-actions">
+            <button class="demo-back" id="demo-back" type="button"><b>←</b> Back</button>
+            <button class="demo-next" id="demo-next" type="button">Next step <b>→</b></button>
+          </div>
+        </div>
+      </div>
+    </aside>
+    <script src="demo.js"></script>
+    <script src="vendor/jszip.min.js"></script>
+    <script src="vendor/xlsx.full.min.js"></script>
+    <script src="vendor/exceljs.min.js"></script>
+    <script type="module" src="app.js"></script>
+  </body>
+</html>
