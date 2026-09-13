@@ -1,4 +1,4 @@
-const cacheName = "slideform-v6";
+const cacheName = "slideform-v7";
 const assets = [
   "./", "./index.html", "./styles.css", "./app.js", "./demo.js", "./manifest.webmanifest",
   "./vendor/jszip.min.js", "./vendor/exceljs.min.js",
@@ -6,7 +6,7 @@ const assets = [
   "./assets/guide-character.png", "./assets/guide-reviewing.png", "./assets/guide-complete.png"
 ];
 
-self.addEventListener("install", (event) => event.waitUntil(caches.open(cacheName).then((cache) => cache.addAll(assets))));
+self.addEventListener("install", (event) => event.waitUntil(caches.open(cacheName).then((cache) => cache.addAll(assets)).then(() => self.skipWaiting())));
 self.addEventListener("activate", (event) => event.waitUntil(
   caches.keys()
     .then((names) => Promise.all(names.filter((name) => name !== cacheName).map((name) => caches.delete(name))))

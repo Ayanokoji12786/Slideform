@@ -260,6 +260,15 @@ def get_text_body_text(text_body):
     return "\n".join(paragraphs)
 
 
+def parse_slide_xml(data):
+    """Parse one slide's XML, rejecting a DOCTYPE, which real PowerPoint slide parts never
+    contain. Guards against entity-expansion ("billion laughs") denial of service from a
+    crafted .pptx, since ElementTree does not disable that by default."""
+    if b"<!DOCTYPE" in data:
+        raise ElementTree.ParseError("DOCTYPE declarations are not allowed in PowerPoint slide XML.")
+    return ElementTree.fromstring(data)
+
+
 def find_slides_containing_text(pptx_path, search_term=DEFAULT_TABLE_SEARCH_TERM):
     """Find slide numbers whose native text or table rows contain a requested phrase."""
     needle = normalize_powerpoint_text(search_term)
@@ -276,7 +285,7 @@ def find_slides_containing_text(pptx_path, search_term=DEFAULT_TABLE_SEARCH_TERM
                     slide_files.append((int(match.group(1)), name))
 
             for slide_number, slide_file in sorted(slide_files):
-                slide_xml = ElementTree.fromstring(presentation.read(slide_file))
+                slide_xml = parse_slide_xml(presentation.read(slide_file))
 
                 text_boxes = [
                     get_text_body_text(text_body)
@@ -318,7 +327,7 @@ def extract_powerpoint_tables(pptx_path, slide_numbers, extract_all_tables):
                         f"Slide {slide_number} does not exist in this PowerPoint file."
                     )
 
-                slide_xml = ElementTree.fromstring(presentation.read(slide_file))
+                slide_xml = parse_slide_xml(presentation.read(slide_file))
                 tables = slide_xml.findall(".//a:tbl", PPTX_NAMESPACES)
                 if not tables:
                     raise ValueError(
