@@ -49,6 +49,7 @@
   }
 
   function close() {
+    if (panel.contains(document.activeElement)) document.querySelector("#demo-trigger").focus();
     panel.classList.remove("open");
     panel.setAttribute("aria-hidden", "true");
     workspaceSteps.forEach((step) => step.classList.remove("demo-focus"));
