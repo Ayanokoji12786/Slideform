@@ -19,6 +19,7 @@ const choices = $(".choice-row");
 const normalise = (value) => value.replace(/\s+/g, " ").trim().toLocaleLowerCase();
 const nodes = (node, name) => Array.from(node.getElementsByTagNameNS(ns, name));
 const presentationNodes = (node, name) => Array.from(node.getElementsByTagNameNS(presentationNs, name));
+const chartNodes = (node, name) => Array.from(node.getElementsByTagNameNS(chartNs, name));
 const slideNumber = (path) => Number(path.match(/slide(\d+)\.xml$/)[1]);
 const outputName = () => state.file.name.replace(/\.(pptx|pdf)$/i, ".xlsx");
 
@@ -49,9 +50,9 @@ function resolvePptPath(base, target) {
 
 function cachedPoints(container) {
   if (!container) return [];
-  const cache = nodes(container, "strCache")[0] || nodes(container, "numCache")[0];
+  const cache = chartNodes(container, "strCache")[0] || chartNodes(container, "numCache")[0];
   if (!cache) return [];
-  return nodes(cache, "pt").sort((a, b) => Number(a.getAttribute("idx")) - Number(b.getAttribute("idx"))).map((point) => nodes(point, "v")[0]?.textContent || "");
+  return chartNodes(cache, "pt").sort((a, b) => Number(a.getAttribute("idx")) - Number(b.getAttribute("idx"))).map((point) => chartNodes(point, "v")[0]?.textContent || "");
 }
 
 async function readSlideCharts(zip, number, xml, parser) {
@@ -106,7 +107,7 @@ async function readPptx(file) {
       return table && { geometry: geometry(frame), rows: nodes(table, "tr").map((row) => nodes(row, "tc").map(textBodyText)) };
     }).filter(Boolean);
     const textBoxes = presentationNodes(xml, "sp").map((shape) => {
-      const text = nodes(shape, "txBody")[0];
+      const text = presentationNodes(shape, "txBody")[0] || nodes(shape, "txBody")[0];
       return text && { geometry: geometry(shape), text: textBodyText(text) };
     }).filter((shape) => shape && shape.text);
     const charts = await readSlideCharts(zip, number, xml, parser);

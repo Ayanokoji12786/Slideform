@@ -8,7 +8,6 @@
   "dependencies": {
     "exceljs": "^4.4.0",
     "jszip": "^3.10.1",
-    "pdfjs-dist": "^6.3.289",
-    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
+    "pdfjs-dist": "^6.3.289"
   }
 }
