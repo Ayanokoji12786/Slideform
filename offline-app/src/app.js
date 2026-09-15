@@ -7,7 +7,7 @@ const presentationNs = "http://schemas.openxmlformats.org/presentationml/2006/ma
 const chartNs = "http://schemas.openxmlformats.org/drawingml/2006/chart";
 const diagramNs = "http://schemas.openxmlformats.org/drawingml/2006/diagram";
 const DEFAULT_KEYWORD = "WIN facility";
-const state = { file: null, kind: null, slides: [], tableMode: "all", convertAll: false, pdf: null };
+const state = { file: null, kind: null, slides: [], tableMode: "structured", convertAll: false, pdf: null };
 const $ = (selector) => document.querySelector(selector);
 const fileInput = $("#pptx-file");
 const dropzone = $("#dropzone");
