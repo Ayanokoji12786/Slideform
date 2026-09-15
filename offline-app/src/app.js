@@ -186,7 +186,7 @@ function extractStructuredFields(xml) {
 function visualOnlyReasons(xml, chartsFound) {
   const reasons = new Set();
   if (xml.getElementsByTagNameNS(diagramNs, "relIds").length) reasons.add("a SmartArt diagram");
-  if (presentationNodes(xml, "cxnSp").length) reasons.add("connected shapes");
+  if (presentationNodes(xml, "cxnSp").some((shape) => nodes(shape, "stCxn").length || nodes(shape, "endCxn").length)) reasons.add("connected shapes");
   if (nodes(xml, "graphicData").some((data) => (data.getAttribute("uri") || "").toLowerCase().includes("ole"))) reasons.add("an embedded object");
   const chartFrames = presentationNodes(xml, "graphicFrame").filter((frame) => frame.getElementsByTagNameNS(chartNs, "chart").length).length;
   if (chartFrames > chartsFound) reasons.add("a chart without readable cached data");
