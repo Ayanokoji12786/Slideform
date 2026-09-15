@@ -316,10 +316,17 @@ async function convertStructuredSummary(selected) {
   const addColumn = (name) => { if (!columns.includes(name)) columns.push(name); };
   addColumn("Slide");
   addColumn("Name");
+
+  // A note repeated verbatim on more than one selected slide is almost always a leftover
+  // from duplicating a slide as a template, not real per-slide content - surfacing it as
+  // if it were specific to each slide would be actively misleading, so it's dropped.
+  const noteCounts = new Map();
+  slides.forEach((slide) => { if (slide.notes) noteCounts.set(slide.notes, (noteCounts.get(slide.notes) || 0) + 1); });
+
   const rows = slides.map((slide) => {
     const row = { Slide: slide.number, Name: slide.title };
     slide.structuredFields.forEach(({ label, value }) => { addColumn(label); row[label] = row[label] ? `${row[label]}\n${value}` : value; });
-    if (slide.notes) { addColumn("Speaker Notes"); row["Speaker Notes"] = slide.notes; }
+    if (slide.notes && noteCounts.get(slide.notes) === 1) { addColumn("Speaker Notes"); row["Speaker Notes"] = slide.notes; }
     return row;
   });
 
