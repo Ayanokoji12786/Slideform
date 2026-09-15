@@ -15,6 +15,7 @@ const fileName = $("#file-name");
 const keywordInput = $("#keyword-filter");
 const slideNumbers = $("#slide-numbers");
 const convertAllCheckbox = $("#convert-all");
+const columnTemplateInput = $("#column-template");
 const convertButton = $("#convert-button");
 const status = $("#status");
 const selectionHelp = $("#selection-help");
@@ -372,9 +373,17 @@ function serializeTable(rows) {
   return rows.map((row) => row.map((cell) => cell.trim()).filter(Boolean).join(" | ")).filter(Boolean).join("\n");
 }
 
+function normaliseHeader(name) {
+  return name.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
 async function convertRobustSummary(selected) {
   const slides = selected.map((number) => state.slides.find((slide) => slide.number === number));
   if (slides.some((slide) => !slide)) throw new Error("One or more selected slide numbers do not exist in this presentation.");
+
+  const template = columnTemplateInput.value.trim()
+    ? columnTemplateInput.value.trim().split(",").map((name) => name.trim()).filter(Boolean)
+    : null;
 
   const columns = [];
   const addColumn = (name) => { if (!columns.includes(name)) columns.push(name); };
@@ -420,13 +429,30 @@ async function convertRobustSummary(selected) {
     return row;
   });
 
+  // With a template, force the exact requested columns/order instead of whatever was
+  // auto-discovered - matched case-insensitively against the data already extracted above.
+  // "Description" defaults to the slide title when no field is literally labeled that,
+  // matching the common convention of a description column duplicating the title; nothing
+  // else is invented, unmatched columns are simply left blank.
+  const finalColumns = template || columns;
+  const finalRows = template ? rows.map((row) => {
+    const lookup = new Map(Object.entries(row).map(([key, value]) => [normaliseHeader(key), value]));
+    const mapped = {};
+    template.forEach((name) => {
+      const key = normaliseHeader(name);
+      if (lookup.has(key)) { mapped[name] = lookup.get(key); return; }
+      mapped[name] = key === "description" ? (lookup.get("name") ?? "") : "";
+    });
+    return mapped;
+  }) : rows;
+
   const workbook = new ExcelJS.Workbook();
   const sheet = workbook.addWorksheet("Slides", { views: [{ showGridLines: false, state: "frozen", ySplit: 1 }] });
-  columns.forEach((name, index) => { sheet.getColumn(index + 1).width = name === "Slide" ? 8 : 32; });
+  finalColumns.forEach((name, index) => { sheet.getColumn(index + 1).width = name === "Slide" ? 8 : 32; });
   const header = sheet.getRow(1);
-  columns.forEach((name, index) => { const cell = header.getCell(index + 1); cell.value = name; cell.font = { bold: true, color: { argb: "FFFFFFFF" } }; cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF111420" } }; applyBorder(cell); });
-  rows.forEach((row, rowIndex) => {
-    columns.forEach((name, columnIndex) => {
+  finalColumns.forEach((name, index) => { const cell = header.getCell(index + 1); cell.value = name; cell.font = { bold: true, color: { argb: "FFFFFFFF" } }; cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF111420" } }; applyBorder(cell); });
+  finalRows.forEach((row, rowIndex) => {
+    finalColumns.forEach((name, columnIndex) => {
       const cell = sheet.getCell(rowIndex + 2, columnIndex + 1);
       cell.value = row[name] ?? "";
       applyBorder(cell);
@@ -534,3 +560,17 @@ document.querySelectorAll(".choice").forEach((button) => button.addEventListener
   });
 }));
 convertButton.addEventListener("click", convert);
+
+const helpTrigger = $("#help-trigger");
+const helpPanel = $("#help-panel");
+const helpClose = $("#help-close");
+function toggleHelp(open) {
+  helpPanel.hidden = !open;
+  helpTrigger.setAttribute("aria-expanded", String(open));
+}
+helpTrigger.addEventListener("click", () => toggleHelp(helpPanel.hidden));
+helpClose.addEventListener("click", () => toggleHelp(false));
+document.addEventListener("click", (event) => {
+  if (!helpPanel.hidden && !helpPanel.contains(event.target) && event.target !== helpTrigger) toggleHelp(false);
+});
+document.addEventListener("keydown", (event) => { if (event.key === "Escape" && !helpPanel.hidden) toggleHelp(false); });

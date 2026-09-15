@@ -66,10 +66,29 @@
               <input id="slide-numbers" inputmode="numeric" placeholder="e.g. 6, 11, 15" autocomplete="off" />
             </div>
             <p class="field-help warn" id="visual-copy-note" role="status" hidden></p>
+            <div class="choice-header">
+              <span class="choice-label">Output format</span>
+              <button type="button" class="help-trigger" id="help-trigger" aria-expanded="false" aria-controls="help-panel">?</button>
+            </div>
             <div class="choice-row" role="group" aria-label="Output format">
               <button class="choice active" type="button" data-table-mode="structured" aria-pressed="true">Structured summary (one row per slide) — recommended</button>
               <button class="choice" type="button" data-table-mode="all" aria-pressed="false">All native tables (one worksheet per slide)</button>
               <button class="choice" type="button" data-table-mode="first" aria-pressed="false">First table only (one worksheet per slide)</button>
+            </div>
+            <div class="help-panel" id="help-panel" role="region" aria-label="Output format help" hidden>
+              <button type="button" class="help-close" id="help-close" aria-label="Close help">×</button>
+              <dl>
+                <dt>Structured summary <span>recommended</span></dt>
+                <dd>One row per slide, in a single sheet. Finds "Label: Value" pairs on each slide (Business Case, Owner, Risks, and so on) and turns them into columns automatically. Best for fact-sheet-style slides, like status or demand trackers.</dd>
+                <dt>All native tables</dt>
+                <dd>One worksheet per slide. Copies every native table on the slide, positioned roughly where it sits visually. Good when you want the original tables preserved as-is rather than reshaped into one summary.</dd>
+                <dt>First table only</dt>
+                <dd>Same as All native tables, but only the first table on each slide — useful when a slide has one real data table plus a small decorative one you don't want.</dd>
+                <dt>Convert All <span>checkbox above</span></dt>
+                <dd>Ignores the filter keyword and slide numbers entirely and processes every slide in the deck using Structured summary, with a fallback for slides that don't match the usual layout so nothing is silently skipped.</dd>
+                <dt>Column order <span>in Export</span></dt>
+                <dd>Optionally paste your own comma-separated header row (from an existing tracker export, for example) to force Structured summary and Convert All to always output exactly those columns, in that order — filled where a slide has the data, left blank otherwise.</dd>
+              </dl>
             </div>
           </div>
         </div>
@@ -80,6 +99,11 @@
             <p class="label">Export</p>
             <h2>Create the workbook</h2>
             <p class="field-help">Text, tables, and available chart data are copied. Empty table cells stay empty.</p>
+            <div class="field-row">
+              <label for="column-template">Column order (optional)</label>
+              <input id="column-template" type="text" placeholder="e.g. Name, Description, Business Case, Owner, Risks" autocomplete="off" />
+            </div>
+            <p class="field-help">Paste a comma-separated header row (from your own tracker export, for example) to force <strong>Structured summary</strong> and <strong>Convert All</strong> to always use exactly those columns, in that order — filled where a slide has the data, left blank otherwise. Leave empty to use whatever columns are found automatically.</p>
             <p class="field-help warn">Automated extraction can misplace or miss content, especially in <strong>Structured summary</strong> mode. Always check the downloaded workbook and correct anything that looks wrong before using it.</p>
             <button class="convert-button" id="convert-button" type="button" disabled>
               <span>Convert to Excel</span><b>↗</b>
