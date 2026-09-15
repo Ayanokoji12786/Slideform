@@ -52,7 +52,15 @@
           <div class="step-content">
             <p class="label">Selection</p>
             <h2>Review the slides</h2>
-            <p class="field-help" id="selection-help">Slides containing <strong>Demand Priority</strong> are selected automatically. Edit the list if needed.</p>
+            <p class="field-help" id="selection-help">Slides containing <strong>WIN facility</strong> are selected automatically. Edit the list if needed.</p>
+            <label class="convert-all-row" for="convert-all">
+              <input type="checkbox" id="convert-all" />
+              <span>Convert All slides<small>Ignores the filter and slide numbers below; processes every slide</small></span>
+            </label>
+            <div class="field-row">
+              <label for="keyword-filter">Filter keyword</label>
+              <input id="keyword-filter" type="text" placeholder="WIN facility" autocomplete="off" />
+            </div>
             <div class="field-row">
               <label for="slide-numbers">Slide numbers</label>
               <input id="slide-numbers" inputmode="numeric" placeholder="e.g. 6, 11, 15" autocomplete="off" />

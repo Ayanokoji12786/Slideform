@@ -6,12 +6,15 @@ const ns = "http://schemas.openxmlformats.org/drawingml/2006/main";
 const presentationNs = "http://schemas.openxmlformats.org/presentationml/2006/main";
 const chartNs = "http://schemas.openxmlformats.org/drawingml/2006/chart";
 const diagramNs = "http://schemas.openxmlformats.org/drawingml/2006/diagram";
-const state = { file: null, kind: null, slides: [], tableMode: "all", pdf: null };
+const DEFAULT_KEYWORD = "WIN facility";
+const state = { file: null, kind: null, slides: [], tableMode: "all", convertAll: false, pdf: null };
 const $ = (selector) => document.querySelector(selector);
 const fileInput = $("#pptx-file");
 const dropzone = $("#dropzone");
 const fileName = $("#file-name");
+const keywordInput = $("#keyword-filter");
 const slideNumbers = $("#slide-numbers");
+const convertAllCheckbox = $("#convert-all");
 const convertButton = $("#convert-button");
 const status = $("#status");
 const selectionHelp = $("#selection-help");
@@ -32,6 +35,12 @@ function setStatus(message, error = false) {
 
 function textBodyText(body) {
   return nodes(body, "p").map((paragraph) => nodes(paragraph, "t").map((run) => run.textContent).join("")).join("\n");
+}
+
+// Merge-continuation cells (hMerge/vMerge) carry no content of their own; including them
+// shifts every later column out of alignment, so they're skipped rather than read as blanks.
+function tableCells(row) {
+  return nodes(row, "tc").filter((cell) => cell.getAttribute("hMerge") !== "1" && cell.getAttribute("vMerge") !== "1");
 }
 
 function geometry(node) {
@@ -109,8 +118,19 @@ function collapse(text) {
   return (text || "").replace(/\s+/g, " ").trim();
 }
 
+// The first shape in document order is usually the title, but some slides lead with an
+// empty placeholder before the real title text - use the first shape that actually has
+// text instead, falling back to the literal first shape if none do.
+function titleShapeOf(xml) {
+  const shapes = presentationNodes(xml, "sp");
+  return shapes.find((shape) => {
+    const text = presentationNodes(shape, "txBody")[0] || nodes(shape, "txBody")[0];
+    return text && textBodyText(text).trim();
+  }) || shapes[0];
+}
+
 function slideTitle(xml) {
-  const shape = presentationNodes(xml, "sp")[0];
+  const shape = titleShapeOf(xml);
   const text = shape && (presentationNodes(shape, "txBody")[0] || nodes(shape, "txBody")[0]);
   return text ? collapse(textBodyText(text)) : "";
 }
@@ -119,9 +139,11 @@ function shapeAnchor(g) {
   return { x: g.x + g.width / 2, y: g.y + g.height / 2 };
 }
 
-function extractStructuredFields(xml) {
+function extractSlideStructure(xml) {
   const fields = [];
-  const titleShape = presentationNodes(xml, "sp")[0];
+  const fallbackTables = [];
+  const fallbackText = [];
+  const titleShape = titleShapeOf(xml);
   const claimed = new Set();
 
   const freeShapes = presentationNodes(xml, "sp").filter((shape) => shape !== titleShape).map((shape) => {
@@ -133,14 +155,14 @@ function extractStructuredFields(xml) {
   presentationNodes(xml, "graphicFrame").forEach((frame) => {
     const table = nodes(frame, "tbl")[0];
     if (!table) return;
-    const rows = nodes(table, "tr").map((row) => nodes(row, "tc").map(textBodyText));
+    const rows = nodes(table, "tr").map((row) => tableCells(row).map(textBodyText));
 
     if (rows.length === 2 && rows[0].length === 1 && rows[1].length === 1) {
       // A 2-row / 1-column "header card": label in row 0, value either inline in row 1
       // or in the nearest other shape on the slide (common when a slide styles the label
       // and its value as two separate boxes with no structural link between them).
       const label = rows[0][0].trim();
-      if (!label || label.length > 60) return;
+      if (!label || label.length > 60) { if (rows.some((r) => r.some((c) => c.trim()))) fallbackTables.push(rows); return; }
       const inline = rows[1][0].trim();
       if (inline) { fields.push({ label, value: collapse(inline) }); return; }
       const anchor = shapeAnchor(geometry(frame));
@@ -155,23 +177,29 @@ function extractStructuredFields(xml) {
       return;
     }
 
+    let matchedAny = false;
     for (let i = 0; i < rows.length; i += 1) {
       const [first, second] = rows[i];
       if (!first || !LABEL_LINE_RE.test(first.trim())) continue;
       const label = first.trim().replace(/:$/, "");
       if (second && second.trim()) {
         fields.push({ label, value: collapse(second) });
+        matchedAny = true;
       } else if (rows[i + 1]?.[0]?.trim() && !LABEL_LINE_RE.test(rows[i + 1][0].trim())) {
         fields.push({ label, value: collapse(rows[i + 1][0]) });
+        matchedAny = true;
         i += 1;
       }
     }
+    // A table with no recognizable label:value rows is still real data (a status table,
+    // a roadmap, anything tabular) - keep it rather than silently discarding it.
+    if (!matchedAny && rows.some((r) => r.some((c) => c.trim()))) fallbackTables.push(rows);
   });
 
   freeShapes.forEach((candidate) => {
     if (claimed.has(candidate.shape)) return;
     const matches = Array.from(candidate.text.matchAll(LABEL_INLINE_RE));
-    if (!matches.length) return;
+    if (!matches.length) { fallbackText.push(candidate.text.trim()); return; }
     matches.forEach((match, index) => {
       const start = match.index + match[0].length;
       const end = index + 1 < matches.length ? matches[index + 1].index : candidate.text.length;
@@ -180,7 +208,7 @@ function extractStructuredFields(xml) {
     });
   });
 
-  return fields;
+  return { fields, fallbackTables, fallbackText };
 }
 
 function visualOnlyReasons(xml, chartsFound) {
@@ -201,6 +229,14 @@ function downloadBuffer(buffer, name) {
   setTimeout(() => URL.revokeObjectURL(link.href), 1000);
 }
 
+function emptySlide(number, reason) {
+  return {
+    number, size: { width: 12192000, height: 6858000 }, tables: [], textBoxes: [], charts: [],
+    visualOnly: [], title: `Slide ${number}`, fields: [], fallbackTables: [], fallbackText: [],
+    notes: "", content: "", readError: reason,
+  };
+}
+
 async function readPptx(file) {
   const zip = await JSZip.loadAsync(file);
   const paths = Object.keys(zip.files).filter((path) => /^ppt\/slides\/slide\d+\.xml$/.test(path)).sort((a, b) => slideNumber(a) - slideNumber(b));
@@ -212,27 +248,32 @@ async function readPptx(file) {
   const size = { width: Number(slideSize?.getAttribute("cx")) || 12192000, height: Number(slideSize?.getAttribute("cy")) || 6858000 };
   const slides = [];
   for (const path of paths) {
-    const xml = parser.parseFromString(await zip.file(path).async("text"), "application/xml");
-    if (xml.querySelector("parsererror")) throw new Error("One slide could not be read.");
     const number = slideNumber(path);
-    const tables = presentationNodes(xml, "graphicFrame").map((frame) => {
-      const table = nodes(frame, "tbl")[0];
-      return table && { geometry: geometry(frame), rows: nodes(table, "tr").map((row) => nodes(row, "tc").map(textBodyText)) };
-    }).filter(Boolean);
-    const textBoxes = presentationNodes(xml, "sp").map((shape) => {
-      const text = presentationNodes(shape, "txBody")[0] || nodes(shape, "txBody")[0];
-      return text && { geometry: geometry(shape), text: textBodyText(text) };
-    }).filter((shape) => shape && shape.text);
-    const charts = await readSlideCharts(zip, number, xml, parser);
-    const notes = await readSlideNotes(zip, number, parser);
-    const content = [
-      ...textBoxes.map((shape) => shape.text),
-      ...tables.flatMap((table) => table.rows.map((row) => row.join(" "))),
-    ];
-    const visualOnly = visualOnlyReasons(xml, charts.length);
-    const title = slideTitle(xml);
-    const structuredFields = extractStructuredFields(xml);
-    slides.push({ number, size, tables, textBoxes, charts, visualOnly, title, structuredFields, notes, hasDemandPriority: content.some((value) => normalise(value).includes("demand priority")) });
+    try {
+      const xml = parser.parseFromString(await zip.file(path).async("text"), "application/xml");
+      if (xml.querySelector("parsererror")) throw new Error("This slide's XML could not be parsed.");
+      const tables = presentationNodes(xml, "graphicFrame").map((frame) => {
+        const table = nodes(frame, "tbl")[0];
+        return table && { geometry: geometry(frame), rows: nodes(table, "tr").map((row) => tableCells(row).map(textBodyText)) };
+      }).filter(Boolean);
+      const textBoxes = presentationNodes(xml, "sp").map((shape) => {
+        const text = presentationNodes(shape, "txBody")[0] || nodes(shape, "txBody")[0];
+        return text && { geometry: geometry(shape), text: textBodyText(text) };
+      }).filter((shape) => shape && shape.text);
+      const charts = await readSlideCharts(zip, number, xml, parser);
+      const notes = await readSlideNotes(zip, number, parser);
+      const visualOnly = visualOnlyReasons(xml, charts.length);
+      const title = slideTitle(xml);
+      const { fields, fallbackTables, fallbackText } = extractSlideStructure(xml);
+      const content = [
+        title, notes,
+        ...textBoxes.map((shape) => shape.text),
+        ...tables.flatMap((table) => table.rows.map((row) => row.join(" "))),
+      ].join(" ");
+      slides.push({ number, size, tables, textBoxes, charts, visualOnly, title, fields, fallbackTables, fallbackText, notes, content, readError: null });
+    } catch (error) {
+      slides.push(emptySlide(number, error.message || "This slide could not be read."));
+    }
   }
   return slides;
 }
@@ -243,9 +284,31 @@ async function readPdf(file) {
 }
 
 function selectedNumbers() {
+  if (state.convertAll) return state.slides.map((slide) => slide.number);
   const values = slideNumbers.value.split(",").map((item) => item.trim()).filter(Boolean);
   if (!values.length || values.some((item) => !/^\d+$/.test(item) || Number(item) < 1)) throw new Error("Enter positive slide numbers separated by commas, for example: 6, 11, 15.");
   return [...new Set(values.map(Number))];
+}
+
+function applyKeywordFilter() {
+  if (state.kind !== "pptx" || !state.slides.length) return;
+  keywordInput.disabled = state.convertAll;
+  slideNumbers.disabled = state.convertAll;
+  choices.hidden = state.convertAll;
+  if (state.convertAll) {
+    slideNumbers.value = state.slides.map((slide) => slide.number).join(", ");
+    selectionHelp.textContent = "Convert All is on. Every slide will be processed, with a sensible fallback for slides that don't match the usual layout.";
+    setStatus(`Convert All is on: ${state.slides.length} slide${state.slides.length === 1 ? "" : "s"} will be converted.`);
+    updateVisualCopyNote();
+    return;
+  }
+  const keyword = keywordInput.value.trim() || DEFAULT_KEYWORD;
+  const needle = normalise(keyword);
+  const matches = state.slides.filter((slide) => normalise(slide.content).includes(needle)).map((slide) => slide.number);
+  slideNumbers.value = matches.join(", ");
+  selectionHelp.textContent = `Slides containing "${keyword}" are selected automatically. Edit the list if needed.`;
+  setStatus(matches.length ? `Selected slides ${matches.join(", ")} because they contain "${keyword}".` : `No slides containing "${keyword}" were found. Enter slide numbers manually.`);
+  updateVisualCopyNote();
 }
 
 function updateVisualCopyNote() {
@@ -270,16 +333,13 @@ async function setFile(file) {
     if (pdf) {
       const result = await readPdf(file);
       state.pdf = result.pdf; slideNumbers.value = result.pages.join(", "); choices.hidden = true;
+      keywordInput.disabled = true; slideNumbers.disabled = false;
       selectionHelp.textContent = "This PDF was rendered by a presentation app. Select the pages to place in Excel as slide images.";
       setStatus(`Selected all ${result.pages.length} PDF pages for image export.`);
       visualNote.hidden = true;
     } else {
       state.slides = await readPptx(file);
-      const matches = state.slides.filter((slide) => slide.hasDemandPriority).map((slide) => slide.number);
-      slideNumbers.value = matches.join(", "); choices.hidden = false;
-      selectionHelp.innerHTML = 'Slides containing <strong>Demand Priority</strong> are selected automatically. Edit the list if needed.';
-      setStatus(matches.length ? `Selected slides ${matches.join(", ")} because they contain Demand Priority.` : "No Demand Priority slides found. Enter slide numbers manually.");
-      updateVisualCopyNote();
+      applyKeywordFilter();
     }
     convertButton.disabled = false;
   } catch (error) {
@@ -308,7 +368,11 @@ function applyBorder(cell) {
   cell.alignment = { vertical: "top", wrapText: true };
 }
 
-async function convertStructuredSummary(selected) {
+function serializeTable(rows) {
+  return rows.map((row) => row.map((cell) => cell.trim()).filter(Boolean).join(" | ")).filter(Boolean).join("\n");
+}
+
+async function convertRobustSummary(selected) {
   const slides = selected.map((number) => state.slides.find((slide) => slide.number === number));
   if (slides.some((slide) => !slide)) throw new Error("One or more selected slide numbers do not exist in this presentation.");
 
@@ -323,15 +387,41 @@ async function convertStructuredSummary(selected) {
   const noteCounts = new Map();
   slides.forEach((slide) => { if (slide.notes) noteCounts.set(slide.notes, (noteCounts.get(slide.notes) || 0) + 1); });
 
+  let structuredCount = 0; let fallbackCount = 0; let errorCount = 0;
+
   const rows = slides.map((slide) => {
     const row = { Slide: slide.number, Name: slide.title };
-    slide.structuredFields.forEach(({ label, value }) => { addColumn(label); row[label] = row[label] ? `${row[label]}\n${value}` : value; });
+
+    if (slide.readError) {
+      errorCount += 1;
+      addColumn("Content");
+      row.Content = `[This slide could not be fully read: ${slide.readError}]`;
+      return row;
+    }
+
+    if (slide.fields.length) {
+      structuredCount += 1;
+      slide.fields.forEach(({ label, value }) => { addColumn(label); row[label] = row[label] ? `${row[label]}\n${value}` : value; });
+      const leftoverText = slide.fallbackText.join("\n\n");
+      const leftoverTables = slide.fallbackTables.map(serializeTable).filter(Boolean).join("\n\n");
+      const leftover = [leftoverText, leftoverTables].filter(Boolean).join("\n\n");
+      if (leftover) { addColumn("Additional Content"); row["Additional Content"] = leftover; }
+    } else {
+      const text = slide.fallbackText.join("\n\n");
+      const tableText = slide.fallbackTables.map(serializeTable).filter(Boolean).join("\n\n");
+      if (text || tableText) {
+        fallbackCount += 1;
+        if (text) { addColumn("Content"); row.Content = text; }
+        if (tableText) { addColumn("Table Data"); row["Table Data"] = tableText; }
+      }
+    }
+
     if (slide.notes && noteCounts.get(slide.notes) === 1) { addColumn("Speaker Notes"); row["Speaker Notes"] = slide.notes; }
     return row;
   });
 
   const workbook = new ExcelJS.Workbook();
-  const sheet = workbook.addWorksheet("Demands", { views: [{ showGridLines: false, state: "frozen", ySplit: 1 }] });
+  const sheet = workbook.addWorksheet("Slides", { views: [{ showGridLines: false, state: "frozen", ySplit: 1 }] });
   columns.forEach((name, index) => { sheet.getColumn(index + 1).width = name === "Slide" ? 8 : 32; });
   const header = sheet.getRow(1);
   columns.forEach((name, index) => { const cell = header.getCell(index + 1); cell.value = name; cell.font = { bold: true, color: { argb: "FFFFFFFF" } }; cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF111420" } }; applyBorder(cell); });
@@ -343,7 +433,12 @@ async function convertStructuredSummary(selected) {
     });
   });
 
-  return workbook.xlsx.writeBuffer().then((buffer) => { downloadBuffer(buffer, outputName()); return `${rows.length} row${rows.length === 1 ? "" : "s"}`; });
+  const skipped = rows.length - structuredCount - fallbackCount - errorCount;
+  const parts = [`${structuredCount} structured`];
+  if (fallbackCount) parts.push(`${fallbackCount} fallback`);
+  if (skipped) parts.push(`${skipped} empty`);
+  if (errorCount) parts.push(`${errorCount} unreadable`);
+  return workbook.xlsx.writeBuffer().then((buffer) => { downloadBuffer(buffer, outputName()); return `${rows.length} row${rows.length === 1 ? "" : "s"} (${parts.join(", ")})`; });
 }
 
 async function convertPptxContent(selected) {
@@ -416,7 +511,7 @@ async function convert() {
   try {
     const selected = selectedNumbers();
     convertButton.disabled = true; setStatus(`Creating ${outputName()}…`);
-    const result = state.kind === "pdf" ? await convertPdfPages(selected) : state.tableMode === "structured" ? await convertStructuredSummary(selected) : await convertPptxContent(selected);
+    const result = state.kind === "pdf" ? await convertPdfPages(selected) : (state.convertAll || state.tableMode === "structured") ? await convertRobustSummary(selected) : await convertPptxContent(selected);
     setStatus(`Downloaded ${outputName()} with ${result}.`);
   } catch (error) {
     setStatus(error.message || "The workbook could not be created.", true);
@@ -427,6 +522,8 @@ async function convert() {
 
 fileInput.addEventListener("change", () => setFile(fileInput.files[0]));
 slideNumbers.addEventListener("input", updateVisualCopyNote);
+keywordInput.addEventListener("input", applyKeywordFilter);
+convertAllCheckbox.addEventListener("change", () => { state.convertAll = convertAllCheckbox.checked; applyKeywordFilter(); });
 ["dragenter", "dragover"].forEach((event) => dropzone.addEventListener(event, (e) => { e.preventDefault(); dropzone.classList.add("dragging"); }));
 ["dragleave", "drop"].forEach((event) => dropzone.addEventListener(event, (e) => { e.preventDefault(); dropzone.classList.remove("dragging"); }));
 dropzone.addEventListener("drop", (event) => setFile(event.dataTransfer.files[0]));
