@@ -66,3 +66,5 @@ python3 -m http.server 8080
 ```
 
 Open `http://localhost:8080` and try the full flow: pick a `.pptx`, confirm the auto-selected slides, and convert. Stop the server with `Ctrl+C` when done.
+
+Access it here: https://slideform1.netlify.app/
