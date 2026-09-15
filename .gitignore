@@ -6,3 +6,7 @@ ppt_to_excel.log
 
 offline-app/node_modules/
 offline-app/dist/
+
+# Real customer/company test files - never belong in the repo
+*.pptx
+*.csv
