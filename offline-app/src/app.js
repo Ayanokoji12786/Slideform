@@ -50,6 +50,24 @@ function resolvePptPath(base, target) {
   return new URL(target, `https://slideform.local/${base}`).pathname.slice(1);
 }
 
+async function readSlideNotes(zip, number, parser) {
+  const relPath = `ppt/slides/_rels/slide${number}.xml.rels`;
+  if (!zip.file(relPath)) return "";
+  const rels = parser.parseFromString(await zip.file(relPath).async("text"), "application/xml");
+  const relationship = Array.from(rels.getElementsByTagName("Relationship")).find((r) => (r.getAttribute("Type") || "").endsWith("/notesSlide"));
+  if (!relationship) return "";
+  const notesFile = zip.file(resolvePptPath("ppt/slides/", relationship.getAttribute("Target")));
+  if (!notesFile) return "";
+  const notesXml = parser.parseFromString(await notesFile.async("text"), "application/xml");
+  const bodies = presentationNodes(notesXml, "sp").map((shape) => {
+    const placeholderType = presentationNodes(shape, "ph")[0]?.getAttribute("type");
+    if (placeholderType === "sldNum" || placeholderType === "sldImg") return "";
+    const text = presentationNodes(shape, "txBody")[0] || nodes(shape, "txBody")[0];
+    return text ? textBodyText(text) : "";
+  }).filter((value) => value.trim());
+  return bodies.join("\n").trim();
+}
+
 function cachedPoints(container) {
   if (!container) return [];
   const cache = chartNodes(container, "strCache")[0] || chartNodes(container, "numCache")[0];
@@ -82,6 +100,87 @@ async function readSlideCharts(zip, number, xml, parser) {
     if (rows.length) charts.push({ geometry: geometry(frame), rows });
   }
   return charts;
+}
+
+const LABEL_LINE_RE = /^[A-Za-z][A-Za-z0-9 &/'()-]{1,55}:$/;
+const LABEL_INLINE_RE = /(?:^|\n)([A-Za-z][A-Za-z0-9 &/'()-]{1,55}):[ \t]*\n?/g;
+
+function collapse(text) {
+  return (text || "").replace(/\s+/g, " ").trim();
+}
+
+function slideTitle(xml) {
+  const shape = presentationNodes(xml, "sp")[0];
+  const text = shape && (presentationNodes(shape, "txBody")[0] || nodes(shape, "txBody")[0]);
+  return text ? collapse(textBodyText(text)) : "";
+}
+
+function shapeAnchor(g) {
+  return { x: g.x + g.width / 2, y: g.y + g.height / 2 };
+}
+
+function extractStructuredFields(xml) {
+  const fields = [];
+  const titleShape = presentationNodes(xml, "sp")[0];
+  const claimed = new Set();
+
+  const freeShapes = presentationNodes(xml, "sp").filter((shape) => shape !== titleShape).map((shape) => {
+    const text = presentationNodes(shape, "txBody")[0] || nodes(shape, "txBody")[0];
+    const value = text && textBodyText(text);
+    return value && value.trim() ? { shape, geometry: geometry(shape), text: value } : null;
+  }).filter(Boolean);
+
+  presentationNodes(xml, "graphicFrame").forEach((frame) => {
+    const table = nodes(frame, "tbl")[0];
+    if (!table) return;
+    const rows = nodes(table, "tr").map((row) => nodes(row, "tc").map(textBodyText));
+
+    if (rows.length === 2 && rows[0].length === 1 && rows[1].length === 1) {
+      // A 2-row / 1-column "header card": label in row 0, value either inline in row 1
+      // or in the nearest other shape on the slide (common when a slide styles the label
+      // and its value as two separate boxes with no structural link between them).
+      const label = rows[0][0].trim();
+      if (!label || label.length > 60) return;
+      const inline = rows[1][0].trim();
+      if (inline) { fields.push({ label, value: collapse(inline) }); return; }
+      const anchor = shapeAnchor(geometry(frame));
+      let best = null; let bestDistance = Infinity;
+      freeShapes.forEach((candidate) => {
+        if (claimed.has(candidate.shape) || LABEL_LINE_RE.test(candidate.text.trim())) return;
+        const c = shapeAnchor(candidate.geometry);
+        const distance = Math.hypot(c.x - anchor.x, c.y - anchor.y);
+        if (distance < bestDistance) { bestDistance = distance; best = candidate; }
+      });
+      if (best) { claimed.add(best.shape); fields.push({ label, value: collapse(best.text) }); }
+      return;
+    }
+
+    for (let i = 0; i < rows.length; i += 1) {
+      const [first, second] = rows[i];
+      if (!first || !LABEL_LINE_RE.test(first.trim())) continue;
+      const label = first.trim().replace(/:$/, "");
+      if (second && second.trim()) {
+        fields.push({ label, value: collapse(second) });
+      } else if (rows[i + 1]?.[0]?.trim() && !LABEL_LINE_RE.test(rows[i + 1][0].trim())) {
+        fields.push({ label, value: collapse(rows[i + 1][0]) });
+        i += 1;
+      }
+    }
+  });
+
+  freeShapes.forEach((candidate) => {
+    if (claimed.has(candidate.shape)) return;
+    const matches = Array.from(candidate.text.matchAll(LABEL_INLINE_RE));
+    if (!matches.length) return;
+    matches.forEach((match, index) => {
+      const start = match.index + match[0].length;
+      const end = index + 1 < matches.length ? matches[index + 1].index : candidate.text.length;
+      const value = collapse(candidate.text.slice(start, end));
+      if (value) fields.push({ label: match[1].trim(), value });
+    });
+  });
+
+  return fields;
 }
 
 function visualOnlyReasons(xml, chartsFound) {
@@ -125,12 +224,15 @@ async function readPptx(file) {
       return text && { geometry: geometry(shape), text: textBodyText(text) };
     }).filter((shape) => shape && shape.text);
     const charts = await readSlideCharts(zip, number, xml, parser);
+    const notes = await readSlideNotes(zip, number, parser);
     const content = [
       ...textBoxes.map((shape) => shape.text),
       ...tables.flatMap((table) => table.rows.map((row) => row.join(" "))),
     ];
     const visualOnly = visualOnlyReasons(xml, charts.length);
-    slides.push({ number, size, tables, textBoxes, charts, visualOnly, hasDemandPriority: content.some((value) => normalise(value).includes("demand priority")) });
+    const title = slideTitle(xml);
+    const structuredFields = extractStructuredFields(xml);
+    slides.push({ number, size, tables, textBoxes, charts, visualOnly, title, structuredFields, notes, hasDemandPriority: content.some((value) => normalise(value).includes("demand priority")) });
   }
   return slides;
 }
@@ -206,6 +308,37 @@ function applyBorder(cell) {
   cell.alignment = { vertical: "top", wrapText: true };
 }
 
+async function convertStructuredSummary(selected) {
+  const slides = selected.map((number) => state.slides.find((slide) => slide.number === number));
+  if (slides.some((slide) => !slide)) throw new Error("One or more selected slide numbers do not exist in this presentation.");
+
+  const columns = [];
+  const addColumn = (name) => { if (!columns.includes(name)) columns.push(name); };
+  addColumn("Slide");
+  addColumn("Name");
+  const rows = slides.map((slide) => {
+    const row = { Slide: slide.number, Name: slide.title };
+    slide.structuredFields.forEach(({ label, value }) => { addColumn(label); row[label] = row[label] ? `${row[label]}\n${value}` : value; });
+    if (slide.notes) { addColumn("Speaker Notes"); row["Speaker Notes"] = slide.notes; }
+    return row;
+  });
+
+  const workbook = new ExcelJS.Workbook();
+  const sheet = workbook.addWorksheet("Demands", { views: [{ showGridLines: false, state: "frozen", ySplit: 1 }] });
+  columns.forEach((name, index) => { sheet.getColumn(index + 1).width = name === "Slide" ? 8 : 32; });
+  const header = sheet.getRow(1);
+  columns.forEach((name, index) => { const cell = header.getCell(index + 1); cell.value = name; cell.font = { bold: true, color: { argb: "FFFFFFFF" } }; cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF111420" } }; applyBorder(cell); });
+  rows.forEach((row, rowIndex) => {
+    columns.forEach((name, columnIndex) => {
+      const cell = sheet.getCell(rowIndex + 2, columnIndex + 1);
+      cell.value = row[name] ?? "";
+      applyBorder(cell);
+    });
+  });
+
+  return workbook.xlsx.writeBuffer().then((buffer) => { downloadBuffer(buffer, outputName()); return `${rows.length} row${rows.length === 1 ? "" : "s"}`; });
+}
+
 async function convertPptxContent(selected) {
   const slides = selected.map((number) => state.slides.find((slide) => slide.number === number));
   if (slides.some((slide) => !slide)) throw new Error("One or more selected slide numbers do not exist in this presentation.");
@@ -276,7 +409,7 @@ async function convert() {
   try {
     const selected = selectedNumbers();
     convertButton.disabled = true; setStatus(`Creating ${outputName()}…`);
-    const result = state.kind === "pdf" ? await convertPdfPages(selected) : await convertPptxContent(selected);
+    const result = state.kind === "pdf" ? await convertPdfPages(selected) : state.tableMode === "structured" ? await convertStructuredSummary(selected) : await convertPptxContent(selected);
     setStatus(`Downloaded ${outputName()} with ${result}.`);
   } catch (error) {
     setStatus(error.message || "The workbook could not be created.", true);

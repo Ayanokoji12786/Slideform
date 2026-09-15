@@ -61,6 +61,7 @@
             <div class="choice-row" role="group" aria-label="Tables to export">
               <button class="choice active" type="button" data-table-mode="all" aria-pressed="true">All native tables</button>
               <button class="choice" type="button" data-table-mode="first" aria-pressed="false">First table only</button>
+              <button class="choice" type="button" data-table-mode="structured" aria-pressed="false">Structured summary (one row per slide)</button>
             </div>
           </div>
         </div>
@@ -71,6 +72,7 @@
             <p class="label">Export</p>
             <h2>Create the workbook</h2>
             <p class="field-help">Text, tables, and available chart data are copied. Empty table cells stay empty.</p>
+            <p class="field-help warn">Automated extraction can misplace or miss content, especially in <strong>Structured summary</strong> mode. Always check the downloaded workbook and correct anything that looks wrong before using it.</p>
             <button class="convert-button" id="convert-button" type="button" disabled>
               <span>Convert to Excel</span><b>↗</b>
             </button>
